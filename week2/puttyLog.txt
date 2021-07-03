@@ -1,0 +1,42 @@
+Welcome to Embedded controller programming
+ - Enter g for toggling Green LED
+ - Enter b for toggling Blue LED
+ - Enter t to change timeout value to 1ms
+ - Enter d to alternate LED delay value between 10ms and 1000ms
+b
+b
+b
+b
+g
+g
+g
+d
+LED delay set to 10ms
+
+b
+...
+b
+g
+...
+g
+Unknown character received!
+
+Unknown character received!
+
+Unknown character received!
+
+Unknown character received!
+
+t
+Unknown character reUnknown character Unknown character reUnknown character reUnknown characterg
+g
+...
+g
+b
+b
+...
+b
+g
+...
+g
+
