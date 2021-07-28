@@ -72,11 +72,10 @@ static void MX_USART3_UART_Init(void);
 static void MX_USB_OTG_FS_PCD_Init(void);
 /* USER CODE BEGIN PFP */
 
-// playing w/ an external assembly routine
-extern void strcopy(char *d, const char *s);
-
-void logMsg(UART_HandleTypeDef *huart, char* _out);
+void logMsg(UART_HandleTypeDef *huart, char *_out);
 char logGetMsg(UART_HandleTypeDef *huart);
+uint32_t numOnes(uint32_t number);
+void myDisableAllIntr(void);
 
 /* USER CODE END PFP */
 
@@ -101,14 +100,14 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 }
 
 // logMsg function prints a string, _out, to the console over the specified UART
-void logMsg(UART_HandleTypeDef *huart, char* _out)
+void logMsg(UART_HandleTypeDef *huart, char *_out)
 {
 	// Clear the complete flag
 	txInterruptComplete = 0;
 
 	char buffer[100] = {0};		// Large char buffer for string printing
-    snprintf(buffer, sizeof(buffer), "%s\n", _out);
-    HAL_UART_Transmit_IT(&huart1, (uint8_t*) buffer, strlen(buffer));
+  snprintf(buffer, sizeof(buffer), "%s\n", _out);
+  HAL_UART_Transmit_IT(&huart1, (uint8_t*) buffer, strlen(buffer));
 
     // Loiter until the IT complete flag is set
 	while (!txInterruptComplete)
@@ -123,10 +122,10 @@ char logGetMsg(UART_HandleTypeDef *huart)
 	// Clear the complete flag
 	rxInterruptComplete = 0;
 
-    char c = '\0';				// Set default return value to NULL
-    HAL_UART_Receive_IT(&huart1, (uint8_t*) &c, sizeof(c));
+  char c = '\0';				// Set default return value to NULL
+  HAL_UART_Receive_IT(&huart1, (uint8_t*) &c, sizeof(c));
 
-    // Loiter until the IT complete flag is set
+  // Loiter until the IT complete flag is set
 	while (!rxInterruptComplete)
 	{
 		HAL_Delay(10);
@@ -135,6 +134,65 @@ char logGetMsg(UART_HandleTypeDef *huart)
 	return c;
 }
 
+// Implement the callback method for HAL_GPIO_EXTI_IRGHandler()
+void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
+{
+	if (GPIO_Pin == GPIO_PIN_13)
+	{
+    logMsg(&huart1, "Blue button pressed");
+		HAL_GPIO_TogglePin(LED3_WIFI__LED4_BLE_GPIO_Port, LED3_WIFI__LED4_BLE_GPIO_Pin);
+	}
+}
+
+// Implement numOnes() with inline assembly to calculate and return 
+//   the numbers of ones in a binary representation of a given number
+uint32_t numOnes(uint32_t number)
+{
+  // Algorithm:
+  //  Count from bit 31 down to zero. At each bit, bitmask input number w/ bit[x] = 1. 
+  //  If the compared result equals 0 (ie 1:1 per bit), increment a counter register.
+  //  Return that count when bit 0 of the position counter has been reached
+
+  asm (
+    "LDR R0, R0 \n\t"             // Placeholder line to track register usage. R0 is the input number to count 1's from
+    "LDR R1 #0 \n\t"              // R1 will be the accrual counter, holding the eventual return value
+    "LDR R2, #31 \n\t"            // R2 will hold the position counter, starting at 31 down to 0
+    "LDR R3, #0x80000000 \n\t"    // R3 will be the bit mask, shifted right by one every iteration until R2 equals 0
+    "LDR R4, #0 \n\t"             // R4 will store the result of the mask operation to test against #0. Clear it at this step
+
+    // Compare R0 to R3, if zero flag is set, increment R1 by 1. Otherwise jump on to the decrement step
+"loop: \n\t"
+    "AND R4, R0, R3 \n\t"
+    "CMPS R4, #0 \n\t"
+    "BEQ decrement \n\t"
+    "ADD R1, #1 \n\t"
+
+    // Decrement R2, test if equal to zero. If so, branch to the function end
+"decrement: \n\t"
+    "SUB R2, R2, #1 \n\t"
+    "CMPS R2, #0 \n\t"
+    "BEQ return \n\t"
+    
+    // If not, shift R3 right by 1 and branch back to the start of the loop
+    "MOV R1, R1, LSR #1 \n\t"
+    "B loop\n\t"
+
+    // Return from function call
+"return: \n\t"
+    "BX lr \n\t"
+  );
+}
+
+// Implement myDisableAllIntr() to disable all interrupts
+void myDisableAllIntr(void)
+{
+  // Use instruction CPD with effect options of ID for "Interrupt Disable" and 
+  //   iflag option i to specify IRQ interrupts
+  asm(
+    "CPSID i \n\t"
+    "BX lr \n\t"
+  );
+}
 
 /* USER CODE END 0 */
 
@@ -176,14 +234,14 @@ int main(void)
   /* USER CODE BEGIN 2 */
 
   // Header info with instructions for user at console
-    logMsg(&huart1, "Welcome to Embedded controller programming");
-    logMsg(&huart1, " - Enter g for toggling Green LED");
-    logMsg(&huart1, " - Enter b for toggling Blue LED");
-    logMsg(&huart1, " - Enter v to find the sum of squares of a number");
-    logMsg(&huart1, " - Enter n to find number of 1’s");
-    logMsg(&huart1, " - Enter d to disable a interrupt");
-    logMsg(&huart1, " - Enter e to enable the interrupt");
-    logMsg(&huart1, " - Enter a to disable all interrupts");
+  logMsg(&huart1, "Welcome to Embedded controller programming");
+  logMsg(&huart1, " - Enter g for toggling Green LED");
+  logMsg(&huart1, " - Enter b for toggling Blue LED");
+  logMsg(&huart1, " - Enter v to find the sum of squares of a number");
+  logMsg(&huart1, " - Enter n to find number of 1’s");
+  logMsg(&huart1, " - Enter d to disable a interrupt");
+  logMsg(&huart1, " - Enter e to enable the interrupt");
+  logMsg(&huart1, " - Enter a to disable all interrupts");
 
     /* USER CODE END 2 */
 
@@ -191,12 +249,104 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-    /* USER CODE END WHILE */
+		/* USER CODE END WHILE */
 
-    /* USER CODE BEGIN 3 */
+		/* USER CODE BEGIN 3 */
 
+    // Define an input char with default value of NULL
+    char input = '\0';
+    input = logGetMsg(&huart1);
 
+    // Evaluate input char and execute methods associated with command
+    switch(input)
+    {
+        // Print received char, toggle green LED
+        case ('g'):
+        {
+            logMsg(&huart1, &input);
+            HAL_GPIO_TogglePin(LED2_GPIO_Port, LED2_Pin);
+            break;
+        }
+
+        // Print received char, toggle blue LED
+        case ('b'):
+        {
+            logMsg(&huart1, &input);
+            HAL_GPIO_TogglePin(LED3_WIFI__LED4_BLE_GPIO_Port, LED3_WIFI__LED4_BLE_Pin);
+            break;
+        }
+
+        case ('v'):
+        {
+            logMsg(&huart1, &input);
+                    
+            // Implement sumOfSquares method in mySquareSum.s
+            // int sum = sumOfSquares(3);   // Use fixed value w/ known result, 3 should be 14
+            // char buffer[50];             // Output buffer
+            // snprintf(buffer, "Sum of squares for 3 is %d", sum);
+            // logMsg(&huart1, buffer);
+
+                    break;
+        }
+
+        case ('n'):
+        {
+            logMsg(&huart1, &input);
+
+            // Implement code using function numOnes()
+            // uint32_t numberOfOnes = numOnes(7);   // Use fixed value w/ known result, 7 should be 3 (0b111)
+            // char buffer[50];             // Output buffer
+            // snprintf(buffer, "Number of ones in 7 is %d", numberOfOnes);
+            // logMsg(&huart1, buffer);
+
+            break;
+        }
+
+        case ('d'):
+        {
+            logMsg(&huart1, &input);
+
+            // Implement code to disable a given intterupt, blue switch in this case
+            // Disable code
+            //  Something like EXTI15_10_IRQn |= (!0x08);
+            //  Figure out the actual register address. 0x0000 00E0? Should be defined in project
+            logMsg(&huart1, "GPIO_EXTI13 disabled");    // Confirm thats the correct EXTI#
+
+            break;
+        }
+
+        case ('e'):
+        {
+            logMsg(&huart1, &input);
+
+            // Implement code to enable a given intterupt, blue switch in this case
+            // Enable code
+            //  Something like EXTI15_10_IRQn |= (0x08);
+            //  Figure out the actual register address. 0x0000 00E0? Should be defined in project
+            logMsg(&huart1, "GPIO_EXTI13 enabled");    // Confirm thats the correct EXTI#
+
+            break;
+        }
+
+        case ('a'):
+        {
+            logMsg(&huart1, &input);
+
+            // Implement code to disable all interrupts using function myDisableAllIntr()
+            myDisableAllIntr();
+
+            break;
+        }
+                
+        // Default case. Print error message
+        default:
+        {
+            logMsg(&huart1, "Unknown character received!\n");
+            break;
+        }
+    }
   }
+
   /* USER CODE END 3 */
 }
 
