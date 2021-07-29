@@ -74,7 +74,10 @@ static void MX_USB_OTG_FS_PCD_Init(void);
 
 void logMsg(UART_HandleTypeDef *huart, char *_out);
 char logGetMsg(UART_HandleTypeDef *huart);
+extern uint32_t sumOfSquares(uint8_t number);
 uint32_t numOnes(uint32_t number);
+void myDisableIntr(uint32_t IRQn);
+void myEnableIntr(uint32_t IRQn);
 void myDisableAllIntr(void);
 
 /* USER CODE END PFP */
@@ -99,6 +102,18 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 	rxInterruptComplete = 1;
 }
 
+// Implement the callback method for HAL_GPIO_EXTI_IRGHandler()
+void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
+{
+	if (GPIO_Pin == GPIO_PIN_13)
+	{
+		HAL_GPIO_TogglePin(LED3_WIFI__LED4_BLE_GPIO_Port, LED3_WIFI__LED4_BLE_Pin);
+		//logMsg(&huart1, "Blue button pressed");
+		char* statusMsg = "Blue button pressed\n";
+		HAL_UART_Transmit(&huart1, (uint8_t*) statusMsg, strlen(statusMsg), 1000);
+	}
+}
+
 // logMsg function prints a string, _out, to the console over the specified UART
 void logMsg(UART_HandleTypeDef *huart, char *_out)
 {
@@ -106,8 +121,8 @@ void logMsg(UART_HandleTypeDef *huart, char *_out)
 	txInterruptComplete = 0;
 
 	char buffer[100] = {0};		// Large char buffer for string printing
-  snprintf(buffer, sizeof(buffer), "%s\n", _out);
-  HAL_UART_Transmit_IT(&huart1, (uint8_t*) buffer, strlen(buffer));
+    snprintf(buffer, sizeof(buffer), "%s\n", _out);
+    HAL_UART_Transmit_IT(&huart1, (uint8_t*) buffer, strlen(buffer));
 
     // Loiter until the IT complete flag is set
 	while (!txInterruptComplete)
@@ -134,28 +149,18 @@ char logGetMsg(UART_HandleTypeDef *huart)
 	return c;
 }
 
-// Implement the callback method for HAL_GPIO_EXTI_IRGHandler()
-void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
-{
-	if (GPIO_Pin == GPIO_PIN_13)
-	{
-    logMsg(&huart1, "Blue button pressed");
-		HAL_GPIO_TogglePin(LED3_WIFI__LED4_BLE_GPIO_Port, LED3_WIFI__LED4_BLE_GPIO_Pin);
-	}
-}
-
-// Implement numOnes() with inline assembly to calculate and return 
+// Implement numOnes() with inline assembly to calculate and return
 //   the numbers of ones in a binary representation of a given number
 uint32_t numOnes(uint32_t number)
 {
   // Algorithm:
-  //  Count from bit 31 down to zero. At each bit, bitmask input number w/ bit[x] = 1. 
+  //  Count from bit 31 down to zero. At each bit, bitmask input number w/ bit[x] = 1.
   //  If the compared result equals 0 (ie 1:1 per bit), increment a counter register.
   //  Return that count when bit 0 of the position counter has been reached
-
+/*
   asm (
     "LDR R0, R0 \n\t"             // Placeholder line to track register usage. R0 is the input number to count 1's from
-    "LDR R1 #0 \n\t"              // R1 will be the accrual counter, holding the eventual return value
+    "LDR R1, #0 \n\t"              // R1 will be the accrual counter, holding the eventual return value that is placed in R0
     "LDR R2, #31 \n\t"            // R2 will hold the position counter, starting at 31 down to 0
     "LDR R3, #0x80000000 \n\t"    // R3 will be the bit mask, shifted right by one every iteration until R2 equals 0
     "LDR R4, #0 \n\t"             // R4 will store the result of the mask operation to test against #0. Clear it at this step
@@ -172,21 +177,40 @@ uint32_t numOnes(uint32_t number)
     "SUB R2, R2, #1 \n\t"
     "CMPS R2, #0 \n\t"
     "BEQ return \n\t"
-    
+
     // If not, shift R3 right by 1 and branch back to the start of the loop
     "MOV R1, R1, LSR #1 \n\t"
     "B loop\n\t"
 
     // Return from function call
 "return: \n\t"
+	"LDR R0, R1 \n\t"
     "BX lr \n\t"
   );
+  */
+}
+
+// Define prototype to disable a given interrupt
+void myDisableIntr(uint32_t IRQn)
+{
+	/* Example CMSIS implementation
+	 *
+	 *		uint32_t wordOffset = (IRQn >> 5);			// IRQn / 32
+	 *		uint32_t bitOffset = (IRQn & 0x1f);			// IRQn mod 32
+	 *		NVIC->ICER[wordOffset] = (1 << bitOffset);	// Clear INT
+	 */
+
+	asm(
+		"LSR R1, R0, 5 \n\t"							// R1 = wordOffset
+		"AND R2, R0, =0x1f \n\t"						// R2 = bitOffset
+	);
+
 }
 
 // Implement myDisableAllIntr() to disable all interrupts
 void myDisableAllIntr(void)
 {
-  // Use instruction CPD with effect options of ID for "Interrupt Disable" and 
+  // Use instruction CPD with effect options of ID for "Interrupt Disable" and
   //   iflag option i to specify IRQ interrupts
   asm(
     "CPSID i \n\t"
@@ -243,15 +267,15 @@ int main(void)
   logMsg(&huart1, " - Enter e to enable the interrupt");
   logMsg(&huart1, " - Enter a to disable all interrupts");
 
-    /* USER CODE END 2 */
+  /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-		/* USER CODE END WHILE */
+    /* USER CODE END WHILE */
 
-		/* USER CODE BEGIN 3 */
+    /* USER CODE BEGIN 3 */
 
     // Define an input char with default value of NULL
     char input = '\0';
@@ -279,14 +303,24 @@ int main(void)
         case ('v'):
         {
             logMsg(&huart1, &input);
-                    
-            // Implement sumOfSquares method in mySquareSum.s
-            // int sum = sumOfSquares(3);   // Use fixed value w/ known result, 3 should be 14
-            // char buffer[50];             // Output buffer
-            // snprintf(buffer, "Sum of squares for 3 is %d", sum);
-            // logMsg(&huart1, buffer);
 
-                    break;
+            // Implement sumOfSquares method in mySquareSum.s
+            uint32_t sum = sumOfSquares(3);   	// Use fixed value w/ known result, 3 should be 14
+			char buffer[50] = {0};             			// Output buffer
+			snprintf(buffer, sizeof(buffer), "Sum of squares for 3 is %lu", sum);
+			logMsg(&huart1, buffer);
+
+            // Adding a simple loop to prove the concept
+			/*
+            for (uint8_t loopCtr = 7; loopCtr > 0; loopCtr--)
+            {
+				uint32_t sum = sumOfSquares(loopCtr);   	// Use fixed value w/ known result, 3 should be 14
+				char buffer[50] = {0};             				// Output buffer
+				snprintf(buffer, sizeof(buffer), "Sum of squares for %i is %lu", loopCtr, sum);
+				logMsg(&huart1, buffer);
+            }*/
+
+            break;
         }
 
         case ('n'):
@@ -294,10 +328,10 @@ int main(void)
             logMsg(&huart1, &input);
 
             // Implement code using function numOnes()
-            // uint32_t numberOfOnes = numOnes(7);   // Use fixed value w/ known result, 7 should be 3 (0b111)
-            // char buffer[50];             // Output buffer
-            // snprintf(buffer, "Number of ones in 7 is %d", numberOfOnes);
-            // logMsg(&huart1, buffer);
+            uint32_t numberOfOnes = numOnes(7);   // Use fixed value w/ known result, 7 should be 3 (0b111)
+            char buffer[50];             // Output buffer
+            snprintf(buffer, sizeof(buffer), "Number of ones in 7 is %lu", numberOfOnes);
+            logMsg(&huart1, buffer);
 
             break;
         }
@@ -306,10 +340,9 @@ int main(void)
         {
             logMsg(&huart1, &input);
 
-            // Implement code to disable a given intterupt, blue switch in this case
-            // Disable code
-            //  Something like EXTI15_10_IRQn |= (!0x08);
-            //  Figure out the actual register address. 0x0000 00E0? Should be defined in project
+            // Implement code to disable a given interrupt, blue switch in this case
+            myDisableInterrupt(40);
+
             logMsg(&huart1, "GPIO_EXTI13 disabled");    // Confirm thats the correct EXTI#
 
             break;
@@ -319,11 +352,10 @@ int main(void)
         {
             logMsg(&huart1, &input);
 
-            // Implement code to enable a given intterupt, blue switch in this case
-            // Enable code
-            //  Something like EXTI15_10_IRQn |= (0x08);
-            //  Figure out the actual register address. 0x0000 00E0? Should be defined in project
-            logMsg(&huart1, "GPIO_EXTI13 enabled");    // Confirm thats the correct EXTI#
+            // Implement code to enable a given interrupt, blue switch in this case
+            myEnableInterrupt(40);
+
+            logMsg(&huart1, "GPIO_EXTI13 enabled");
 
             break;
         }
@@ -337,7 +369,7 @@ int main(void)
 
             break;
         }
-                
+
         // Default case. Print error message
         default:
         {
@@ -480,7 +512,7 @@ static void MX_I2C2_Init(void)
 
   /* USER CODE END I2C2_Init 1 */
   hi2c2.Instance = I2C2;
-  hi2c2.Init.Timing = 0x00000E14;
+  hi2c2.Init.Timing = 0x10909CEC;
   hi2c2.Init.OwnAddress1 = 0;
   hi2c2.Init.AddressingMode = I2C_ADDRESSINGMODE_7BIT;
   hi2c2.Init.DualAddressMode = I2C_DUALADDRESS_DISABLE;
@@ -742,11 +774,11 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(GPIOE, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : BUTTON_EXTI13_Pin */
-  GPIO_InitStruct.Pin = BUTTON_EXTI13_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_IT_FALLING;
+  /*Configure GPIO pins : PC13 VL53L0X_GPIO1_EXTI7_Pin LSM3MDL_DRDY_EXTI8_Pin */
+  GPIO_InitStruct.Pin = GPIO_PIN_13|VL53L0X_GPIO1_EXTI7_Pin|LSM3MDL_DRDY_EXTI8_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
-  HAL_GPIO_Init(BUTTON_EXTI13_GPIO_Port, &GPIO_InitStruct);
+  HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
 
   /*Configure GPIO pins : ARD_A5_Pin ARD_A4_Pin ARD_A3_Pin ARD_A2_Pin
                            ARD_A1_Pin ARD_A0_Pin */
@@ -834,12 +866,6 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
-
-  /*Configure GPIO pins : VL53L0X_GPIO1_EXTI7_Pin LSM3MDL_DRDY_EXTI8_Pin */
-  GPIO_InitStruct.Pin = VL53L0X_GPIO1_EXTI7_Pin|LSM3MDL_DRDY_EXTI8_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
 
   /*Configure GPIO pin : PMOD_SPI2_SCK_Pin */
