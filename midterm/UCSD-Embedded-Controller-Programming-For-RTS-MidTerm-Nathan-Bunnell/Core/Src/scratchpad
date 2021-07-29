@@ -13,3 +13,33 @@
 
 	  HAL_Delay(10000);
 	  */
+	  
+	  
+From: https://developer.arm.com/documentation/ddi0439/b/Nested-Vectored-Interrupt-Controller/NVIC-programmers-model
+
+						Table 6.1. NVIC registers
+						
+	0xE000E100 - 0xE000E11C	NVIC_ISER0 - NVIC_ISER7	RW	0x00000000	Interrupt Set-Enable Registers
+	0xE000E180 - 0E000xE19C	NVIC_ICER0 - NVIC_ICER7	RW	0x00000000	Interrupt Clear-Enable Registers
+	
+// Define prototype to disable a given interrupt
+void myDisableIntr(uint32_t IRQn)
+{
+	/* Example CMSIS implementation
+	 *
+	 *  uint32_t wordOffset = (IRQn >> 5);		// IRQn / 32
+	 *  uint32_t bitOffset = (IRQn & 0x1f);		// IRQn mod 32
+	 *  NVIC->ICER[wordOffset] = (1 << bitOffset);	// Clear INT
+	 */
+
+	asm(
+		"LSR R1, R0, #5 \n\t"			// R1 = wordOffset
+		"AND R2, R0, #0x1f \n\t"		// R2 = bitOffset
+		"LDR R3, =0xE000E180 \n\t"		// R3 = address of NVIC_ICER0
+		
+		"ADD R3, R3, R2 \n\t"			// Move R3 by calculated word offset
+		"ORR R4, R2, [R3] \n\t"			// R4 is bit masked value of R3's address and bit offset
+		"STR R4, [R3] \n\t"			// Store new value into memory pointed to by R3
+		
+	);
+}
