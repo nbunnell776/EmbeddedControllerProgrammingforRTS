@@ -43,3 +43,15 @@ void myDisableIntr(uint32_t IRQn)
 		
 	);
 }
+
+
+
+// Adding a simple loop to prove the concept
+			/*
+            for (uint8_t loopCtr = 7; loopCtr > 0; loopCtr--)
+            {
+				uint32_t sum = sumOfSquares(loopCtr);   	// Use fixed value w/ known result, 3 should be 14
+				char buffer[50] = {0};             				// Output buffer
+				snprintf(buffer, sizeof(buffer), "Sum of squares for %i is %lu", loopCtr, sum);
+				logMsg(&huart1, buffer);
+            }*/

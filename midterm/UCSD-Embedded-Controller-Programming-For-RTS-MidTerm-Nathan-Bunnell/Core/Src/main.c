@@ -122,7 +122,7 @@ void logMsg(UART_HandleTypeDef *huart, char *_out)
 
 	char buffer[100] = {0};		// Large char buffer for string printing
     snprintf(buffer, sizeof(buffer), "%s\n", _out);
-    HAL_UART_Transmit_IT(&huart1, (uint8_t*) buffer, strlen(buffer));
+    HAL_UART_Transmit_IT(&huart1, (uint8_t*) buffer, sizeof(buffer));
 
     // Loiter until the IT complete flag is set
 	while (!txInterruptComplete)
@@ -157,38 +157,58 @@ uint32_t numOnes(uint32_t number)
   //  Count from bit 31 down to zero. At each bit, bitmask input number w/ bit[x] = 1.
   //  If the compared result equals 0 (ie 1:1 per bit), increment a counter register.
   //  Return that count when bit 0 of the position counter has been reached
-/*
-  asm (
-    "LDR R0, R0 \n\t"             // Placeholder line to track register usage. R0 is the input number to count 1's from
-    "LDR R1, #0 \n\t"              // R1 will be the accrual counter, holding the eventual return value that is placed in R0
-    "LDR R2, #31 \n\t"            // R2 will hold the position counter, starting at 31 down to 0
-    "LDR R3, #0x80000000 \n\t"    // R3 will be the bit mask, shifted right by one every iteration until R2 equals 0
-    "LDR R4, #0 \n\t"             // R4 will store the result of the mask operation to test against #0. Clear it at this step
+
+  asm volatile (
+    "MOV R0, R0 \n\t"             // Placeholder line to track register usage. R0 is the input number to count 1's from
+    "LDR R1, =0 \n\t"             // R1 will be the accrual counter, holding the eventual return value that is placed in R0
+    "LDR R2, =31 \n\t"            // R2 will hold the position counter, starting at 31 down to 0
+    "LDR R3, =0x80000000 \n\t"    // R3 will be the bit mask, shifted right by one every iteration until R2 equals 0
+    "LDR R4, =0 \n\t"             // R4 will store the result of the mask operation to test against #0. Clear it at this step
+
 
     // Compare R0 to R3, if zero flag is set, increment R1 by 1. Otherwise jump on to the decrement step
 "loop: \n\t"
     "AND R4, R0, R3 \n\t"
-    "CMPS R4, #0 \n\t"
+    "CMP R4, #0 \n\t"
     "BEQ decrement \n\t"
     "ADD R1, #1 \n\t"
 
-    // Decrement R2, test if equal to zero. If so, branch to the function end
+    // Decrement R2, test if equal to zero. If so, branch to the function end and perform final shift and test before returning
 "decrement: \n\t"
     "SUB R2, R2, #1 \n\t"
-    "CMPS R2, #0 \n\t"
-    "BEQ return \n\t"
+    "CMP R2, #0 \n\t"
+    "BEQ final \n\t"
 
     // If not, shift R3 right by 1 and branch back to the start of the loop
-    "MOV R1, R1, LSR #1 \n\t"
+    "LSR R3, R3, #1 \n\t"
     "B loop\n\t"
 
-    // Return from function call
+    // Final test and return from function call
+"final: \n\t"
+	"LSR R3, R3, #1 \n\t"
+	"AND R4, R0, R3 \n\t"
+	"CMP R4, #0 \n\t"
+	"BEQ return \n\t"
+	"ADD R1, #1 \n\t"
+
 "return: \n\t"
-	"LDR R0, R1 \n\t"
+	"MOV R0, R1 \n\t"
     "BX lr \n\t"
   );
-  */
+
 }
+
+/*
+ * 	Addresses for ISER and ICER taken from from:
+ *
+ * 		https://developer.arm.com/documentation/ddi0439/b/Nested-Vectored-Interrupt-Controller/NVIC-programmers-model
+ *
+ *											Table 6.1. NVIC registers
+ *
+ *		0xE000E100 - 0xE000E11C	NVIC_ISER0 - NVIC_ISER7	RW	0x00000000	Interrupt Set-Enable Registers
+ *		0xE000E180 - 0E000xE19C	NVIC_ICER0 - NVIC_ICER7	RW	0x00000000	Interrupt Clear-Enable Registers
+ *
+ */
 
 // Define prototype to disable a given interrupt
 void myDisableIntr(uint32_t IRQn)
@@ -200,9 +220,45 @@ void myDisableIntr(uint32_t IRQn)
 	 *		NVIC->ICER[wordOffset] = (1 << bitOffset);	// Clear INT
 	 */
 
-	asm(
-		"LSR R1, R0, 5 \n\t"							// R1 = wordOffset
-		"AND R2, R0, =0x1f \n\t"						// R2 = bitOffset
+	asm volatile(
+		"LSR R1, R0, #5 \n\t"			// R1 = wordOffset
+		"LSL R1, R1, #2 \n\t"			// Multiply offset by 4 bytes (left shift by 2)
+										//  to get correct target address
+		"AND R2, R0, #0x1f \n\t"		// R2 = bitOffset
+		"LDR R0, =1 \n\t"				// Set up for a left shift by 1
+		"LSL R2, R0, R2 \n\t"			// Shift by bitOffset into R2 for bit offset (1 << bitOffset)
+		"LDR R3, =0xe000e180 \n\t"		// R3 = address of NVIC_ICER0
+
+		"ADD R3, R3, R1 \n\t"			// Move R3 by calculated word offset to target address
+		"STR R2, [R3] \n\t"				// Store new value into address pointed to by R3
+
+		"BX lr \n\t"
+	);
+
+}
+
+void myEnableIntr(uint32_t IRQn)
+{
+	/* Example CMSIS implementation
+	 *
+	 *		uint32_t wordOffset = (IRQn >> 5);			// IRQn / 32
+	 *		uint32_t bitOffset = (IRQn & 0x1f);			// IRQn mod 32
+	 *		NVIC->ISER[wordOffset] = (1 << bitOffset);	// Enable INT
+	 */
+
+	asm volatile(
+		"LSR R1, R0, #5 \n\t"			// R1 = wordOffset
+		"LSL R1, R1, #2 \n\t"			// Multiply offset by 4 bytes (left shift by 2)
+										//  to get correct target address
+		"AND R2, R0, #0x1f \n\t"		// R2 = bitOffset
+		"LDR R0, =1 \n\t"				// Set up for a left shift by 1
+		"LSL R2, R0, R2 \n\t"			// Shift by bitOffset into R2 for bit offset (1 << bitOffset)
+		"LDR R3, =0xe000e100 \n\t"		// R3 = address of NVIC_ISER0
+
+		"ADD R3, R3, R1 \n\t"			// Move R3 by calculated word offset to target address
+		"STR R2, [R3] \n\t"				// Store new value into address pointed to by R3
+
+		"BX lr \n\t"
 	);
 
 }
@@ -310,16 +366,6 @@ int main(void)
 			snprintf(buffer, sizeof(buffer), "Sum of squares for 3 is %lu", sum);
 			logMsg(&huart1, buffer);
 
-            // Adding a simple loop to prove the concept
-			/*
-            for (uint8_t loopCtr = 7; loopCtr > 0; loopCtr--)
-            {
-				uint32_t sum = sumOfSquares(loopCtr);   	// Use fixed value w/ known result, 3 should be 14
-				char buffer[50] = {0};             				// Output buffer
-				snprintf(buffer, sizeof(buffer), "Sum of squares for %i is %lu", loopCtr, sum);
-				logMsg(&huart1, buffer);
-            }*/
-
             break;
         }
 
@@ -340,8 +386,9 @@ int main(void)
         {
             logMsg(&huart1, &input);
 
-            // Implement code to disable a given interrupt, blue switch in this case
-            myDisableInterrupt(40);
+            // Implement code to disable a given interrupt, blue switch on GPIO_EXTI13 in this case
+            uint32_t IRQn = 40;
+            myDisableIntr(IRQn);
 
             logMsg(&huart1, "GPIO_EXTI13 disabled");    // Confirm thats the correct EXTI#
 
@@ -352,8 +399,9 @@ int main(void)
         {
             logMsg(&huart1, &input);
 
-            // Implement code to enable a given interrupt, blue switch in this case
-            myEnableInterrupt(40);
+            // Implement code to enable a given interrupt, blue switch on GPIO_EXTI13 in this case
+            uint32_t IRQn = 40;
+            myEnableIntr(IRQn);
 
             logMsg(&huart1, "GPIO_EXTI13 enabled");
 
@@ -938,3 +986,4 @@ void assert_failed(uint8_t *file, uint32_t line)
 #endif /* USE_FULL_ASSERT */
 
 /************************ (C) COPYRIGHT STMicroelectronics *****END OF FILE****/
+
