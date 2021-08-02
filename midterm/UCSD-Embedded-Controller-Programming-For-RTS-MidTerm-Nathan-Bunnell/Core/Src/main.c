@@ -108,7 +108,7 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 	if (GPIO_Pin == GPIO_PIN_13)
 	{
 		HAL_GPIO_TogglePin(LED3_WIFI__LED4_BLE_GPIO_Port, LED3_WIFI__LED4_BLE_Pin);
-		//logMsg(&huart1, "Blue button pressed");
+		//logMsg(&huart1, "Blue button pressed");		// Using interrupt method would cause system to hang?
 		char* statusMsg = "Blue button pressed\n";
 		HAL_UART_Transmit(&huart1, (uint8_t*) statusMsg, strlen(statusMsg), 1000);
 	}
@@ -122,7 +122,7 @@ void logMsg(UART_HandleTypeDef *huart, char *_out)
 
 	char buffer[100] = {0};		// Large char buffer for string printing
     snprintf(buffer, sizeof(buffer), "%s\n", _out);
-    HAL_UART_Transmit_IT(&huart1, (uint8_t*) buffer, sizeof(buffer));
+    HAL_UART_Transmit_IT(&huart1, (uint8_t*) buffer, strlen(buffer));
 
     // Loiter until the IT complete flag is set
 	while (!txInterruptComplete)
@@ -199,7 +199,7 @@ uint32_t numOnes(uint32_t number)
 }
 
 /*
- * 	Addresses for ISER and ICER taken from from:
+ * 	Addresses for ISER and ICER taken from:
  *
  * 		https://developer.arm.com/documentation/ddi0439/b/Nested-Vectored-Interrupt-Controller/NVIC-programmers-model
  *
@@ -343,7 +343,7 @@ int main(void)
         // Print received char, toggle green LED
         case ('g'):
         {
-            logMsg(&huart1, &input);
+            logMsg(&huart1, "g");
             HAL_GPIO_TogglePin(LED2_GPIO_Port, LED2_Pin);
             break;
         }
@@ -351,14 +351,14 @@ int main(void)
         // Print received char, toggle blue LED
         case ('b'):
         {
-            logMsg(&huart1, &input);
+            logMsg(&huart1, "b");
             HAL_GPIO_TogglePin(LED3_WIFI__LED4_BLE_GPIO_Port, LED3_WIFI__LED4_BLE_Pin);
             break;
         }
 
         case ('v'):
         {
-            logMsg(&huart1, &input);
+            logMsg(&huart1, "v");
 
             // Implement sumOfSquares method in mySquareSum.s
             uint32_t sum = sumOfSquares(3);   	// Use fixed value w/ known result, 3 should be 14
@@ -371,7 +371,7 @@ int main(void)
 
         case ('n'):
         {
-            logMsg(&huart1, &input);
+            logMsg(&huart1, "n");
 
             // Implement code using function numOnes()
             uint32_t numberOfOnes = numOnes(7);   // Use fixed value w/ known result, 7 should be 3 (0b111)
@@ -384,7 +384,7 @@ int main(void)
 
         case ('d'):
         {
-            logMsg(&huart1, &input);
+            logMsg(&huart1, "d");
 
             // Implement code to disable a given interrupt, blue switch on GPIO_EXTI13 in this case
             uint32_t IRQn = 40;
@@ -397,7 +397,7 @@ int main(void)
 
         case ('e'):
         {
-            logMsg(&huart1, &input);
+            logMsg(&huart1, "e");
 
             // Implement code to enable a given interrupt, blue switch on GPIO_EXTI13 in this case
             uint32_t IRQn = 40;
@@ -410,7 +410,7 @@ int main(void)
 
         case ('a'):
         {
-            logMsg(&huart1, &input);
+            logMsg(&huart1, "a");
 
             // Implement code to disable all interrupts using function myDisableAllIntr()
             myDisableAllIntr();

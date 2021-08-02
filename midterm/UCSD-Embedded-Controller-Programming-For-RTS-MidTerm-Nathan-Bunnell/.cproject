@@ -143,7 +143,7 @@
                     					
                     <sourceEntries>
                         						
-                        <entry excluding="Src/main_backup.c|Src/strcopy.s|Src/scratchpad" flags="VALUE_WORKSPACE_PATH|RESOLVED" kind="sourcePath" name="Core"/>
+                        <entry excluding="Src/main_Backup.c|Src/main_inProc.c|Src/main_backup.c|Src/strcopy.s|Src/scratchpad" flags="VALUE_WORKSPACE_PATH|RESOLVED" kind="sourcePath" name="Core"/>
                         						
                         <entry flags="VALUE_WORKSPACE_PATH|RESOLVED" kind="sourcePath" name="Drivers"/>
                         					
