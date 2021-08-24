@@ -22,6 +22,8 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include <stdio.h>
+#include <string.h>
 
 /* USER CODE END Includes */
 
@@ -69,10 +71,85 @@ static void MX_USART3_UART_Init(void);
 static void MX_USB_OTG_FS_PCD_Init(void);
 /* USER CODE BEGIN PFP */
 
+void logMsg(UART_HandleTypeDef *huart, char *_out);
+char logGetMsg(UART_HandleTypeDef *huart);
+
+void myDelay1(uint8_t mSec);
+void myDelay2(uint8_t mSec);
+
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+
+// Define a pair of interrupt-complete status flags
+static bool txInterruptComplete = 0;
+static bool rxInterruptComplete = 0;
+
+// Define a software interrupt-complete status flag
+static bool swInterruptComplete = 0;
+
+// Define a interrupt-complete status flag and accrual counter for Timer 3
+static bool timer3InterruptComplete = 0;
+uint8_t timer3Accrual = 0;
+
+// Define the IT callback functions
+void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart)
+{
+	// Set our complete flag
+	txInterruptComplete = 1;
+}
+
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
+{
+	// Set our complete flag
+	rxInterruptComplete = 1;
+}
+
+// logMsg function prints a string, _out, to the console over the specified UART
+void logMsg(UART_HandleTypeDef *huart, char *_out)
+{
+	// Clear the complete flag
+	txInterruptComplete = 0;
+
+	char buffer[100] = {0};		// Large char buffer for string printing
+    snprintf(buffer, sizeof(buffer), "%s\n", _out);
+    HAL_UART_Transmit_IT(&huart1, (uint8_t*) buffer, strlen(buffer));
+
+    // Loiter until the IT complete flag is set
+	while (!txInterruptComplete)
+	{
+		HAL_Delay(10);
+	}
+}
+
+// logMsg function returns a char, c, over the specified UART
+char logGetMsg(UART_HandleTypeDef *huart)
+{
+	// Clear the complete flag
+	rxInterruptComplete = 0;
+
+  char c = '\0';				// Set default return value to NULL
+  HAL_UART_Receive_IT(&huart1, (uint8_t*) &c, sizeof(c));
+
+  // Loiter until the IT complete flag is set
+	while (!rxInterruptComplete)
+	{
+		HAL_Delay(10);
+	}
+
+	return c;
+}
+
+void myDelay1(uint8_t mSec)
+{
+	;	// Implement using Timer 2 interrupt
+}
+
+void myDelay1(uint8_t mSec)
+{
+	;	// Implement using SysTick interrupt
+}
 
 /* USER CODE END 0 */
 
@@ -113,6 +190,14 @@ int main(void)
   MX_USB_OTG_FS_PCD_Init();
   /* USER CODE BEGIN 2 */
 
+  // Header info with instructions for user at console
+  logMsg(&huart1, "Welcome to Embedded controller programming");
+  logMsg(&huart1, " - Enter g for toggling Green LED");
+  logMsg(&huart1, " - Enter b for toggling Blue LED");
+  logMsg(&huart1, " - Enter s to generate SW interrupt");
+  logMsg(&huart1, " - Enter t to start timer 3");
+  logMsg(&huart1, " - Enter w to trigger watchdog reset");
+  
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -122,7 +207,102 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+
+    // Define an input char with default value of NULL
+    char input = '\0';
+    input = logGetMsg(&huart1);
+
+    // Evaluate input char and execute methods associated with command
+    switch(input)
+    {
+
+        case ('g'):
+        {
+			// Print received char, print message indicating delay, toggle green LED on and off with myDelay1()
+            logMsg(&huart1, "g");
+			
+			snprintf(buffer, sizeof(buffer), "Toggling green LED every 1000msec");
+			logMsg(&huart1, buffer);
+			
+            HAL_GPIO_TogglePin(LED2_GPIO_Port, LED2_Pin);
+			myDelay(1000);
+			HAL_GPIO_TogglePin(LED2_GPIO_Port, LED2_Pin);
+			myDelay(1000);
+			
+            break;
+        }
+
+        case ('b'):
+        {
+			// Print received char, print message indicating delay, toggle blue LED on and off with myDelay1()
+            logMsg(&huart1, "b");
+			
+			snprintf(buffer, sizeof(buffer), "Toggling blue LED every 1000msec");
+			logMsg(&huart1, buffer);
+			
+            HAL_GPIO_TogglePin(LED3_WIFI__LED4_BLE_GPIO_Port, LED3_WIFI__LED4_BLE_Pin);
+			myDelay(1000);
+			HAL_GPIO_TogglePin(LED3_WIFI__LED4_BLE_GPIO_Port, LED3_WIFI__LED4_BLE_Pin);
+			myDelay(1000);
+			
+            break;
+        }
+
+        case ('s'):
+        {
+            logMsg(&huart1, "s");
+
+            // Implement SW interrupt under FMC_IRQn in stm32l4xx_it.c
+			while (!swInterruptComplete)
+			{
+				;	// Loiter until flag is set
+			}
+			
+			swInterruptComplete = 0;	// Reset flag
+			
+            snprintf(buffer, sizeof(buffer), "SW Interrupt detected");
+			logMsg(&huart1, buffer);
+
+            break;
+        }
+
+        case ('t'):
+        {
+            logMsg(&huart1, "t");
+
+            // Implement event counter using timer 3
+            while (!swInterruptComplete)
+			{
+				;	// Loiter until target count is reached
+			}
+			
+            snprintf(buffer, sizeof(buffer), "Total counted timer3 event = %d", timer3Accrual);
+            logMsg(&huart1, buffer);
+			
+			timer3Accrual = 0;	// Reset accrual
+
+            break;
+        }
+
+        case ('w'):
+        {
+            logMsg(&huart1, "w");
+
+            // Implement code to delay 1 second and miss the watchdog pet. Should reset board
+            myDelay2(1000);
+
+            break;
+        }
+
+        // Default case. Print error message
+        default:
+        {
+            logMsg(&huart1, "Unknown character received!\n");
+            break;
+        }
+    }
   }
+
   /* USER CODE END 3 */
 }
 
@@ -134,13 +314,8 @@ void SystemClock_Config(void)
 {
   RCC_OscInitTypeDef RCC_OscInitStruct = {0};
   RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
+  RCC_PeriphCLKInitTypeDef PeriphClkInit = {0};
 
-  /** Configure the main internal regulator output voltage
-  */
-  if (HAL_PWREx_ControlVoltageScaling(PWR_REGULATOR_VOLTAGE_SCALE1) != HAL_OK)
-  {
-    Error_Handler();
-  }
   /** Configure LSE Drive Capability
   */
   HAL_PWR_EnableBkUpAccess();
@@ -174,6 +349,31 @@ void SystemClock_Config(void)
   RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
 
   if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_4) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  PeriphClkInit.PeriphClockSelection = RCC_PERIPHCLK_USART1|RCC_PERIPHCLK_USART3
+                              |RCC_PERIPHCLK_I2C2|RCC_PERIPHCLK_DFSDM1
+                              |RCC_PERIPHCLK_USB;
+  PeriphClkInit.Usart1ClockSelection = RCC_USART1CLKSOURCE_PCLK2;
+  PeriphClkInit.Usart3ClockSelection = RCC_USART3CLKSOURCE_PCLK1;
+  PeriphClkInit.I2c2ClockSelection = RCC_I2C2CLKSOURCE_PCLK1;
+  PeriphClkInit.Dfsdm1ClockSelection = RCC_DFSDM1CLKSOURCE_PCLK;
+  PeriphClkInit.UsbClockSelection = RCC_USBCLKSOURCE_PLLSAI1;
+  PeriphClkInit.PLLSAI1.PLLSAI1Source = RCC_PLLSOURCE_MSI;
+  PeriphClkInit.PLLSAI1.PLLSAI1M = 1;
+  PeriphClkInit.PLLSAI1.PLLSAI1N = 24;
+  PeriphClkInit.PLLSAI1.PLLSAI1P = RCC_PLLP_DIV7;
+  PeriphClkInit.PLLSAI1.PLLSAI1Q = RCC_PLLQ_DIV2;
+  PeriphClkInit.PLLSAI1.PLLSAI1R = RCC_PLLR_DIV2;
+  PeriphClkInit.PLLSAI1.PLLSAI1ClockOut = RCC_PLLSAI1_48M2CLK;
+  if (HAL_RCCEx_PeriphCLKConfig(&PeriphClkInit) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /** Configure the main internal regulator output voltage
+  */
+  if (HAL_PWREx_ControlVoltageScaling(PWR_REGULATOR_VOLTAGE_SCALE1) != HAL_OK)
   {
     Error_Handler();
   }
@@ -498,11 +698,11 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(GPIOE, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : BUTTON_EXTI13_Pin */
-  GPIO_InitStruct.Pin = BUTTON_EXTI13_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_IT_FALLING;
+  /*Configure GPIO pins : PC13 VL53L0X_GPIO1_EXTI7_Pin LSM3MDL_DRDY_EXTI8_Pin */
+  GPIO_InitStruct.Pin = GPIO_PIN_13|VL53L0X_GPIO1_EXTI7_Pin|LSM3MDL_DRDY_EXTI8_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
-  HAL_GPIO_Init(BUTTON_EXTI13_GPIO_Port, &GPIO_InitStruct);
+  HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
 
   /*Configure GPIO pins : ARD_A5_Pin ARD_A4_Pin ARD_A3_Pin ARD_A2_Pin
                            ARD_A1_Pin ARD_A0_Pin */
@@ -592,12 +792,6 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : VL53L0X_GPIO1_EXTI7_Pin LSM3MDL_DRDY_EXTI8_Pin */
-  GPIO_InitStruct.Pin = VL53L0X_GPIO1_EXTI7_Pin|LSM3MDL_DRDY_EXTI8_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
-
   /*Configure GPIO pin : PMOD_SPI2_SCK_Pin */
   GPIO_InitStruct.Pin = PMOD_SPI2_SCK_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
@@ -617,7 +811,7 @@ static void MX_GPIO_Init(void)
   /*Configure GPIO pins : ARD_D15_Pin ARD_D14_Pin */
   GPIO_InitStruct.Pin = ARD_D15_Pin|ARD_D14_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_AF_OD;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Pull = GPIO_PULLUP;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
   GPIO_InitStruct.Alternate = GPIO_AF4_I2C1;
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
