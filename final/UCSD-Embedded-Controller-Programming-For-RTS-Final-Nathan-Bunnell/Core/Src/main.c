@@ -264,7 +264,7 @@ int main(void)
   FMC_IRQn_Init();
 
   // Init the overflow interrupt for TIM3
-  __HAL_TIM_ENABLE_IT(&htim3, TIM_IT_UPDATE );
+  HAL_TIM_Base_Start_IT(&htim3);
 
   // Header info with instructions for user at console
   logMsg(&huart1, "Welcome to Embedded controller programming");
@@ -363,6 +363,9 @@ int main(void)
 			TIM3->ARR = 999;			// Delay (1k mSec) - 1
 			TIM3->CR1 |= TIM_CR1_CEN;	// Re-enable timer
 */
+
+            tim3Accrual = 0;	// Reset accrual
+
             while (tim3Accrual < 10)
             {
             	tim3InterruptComplete = 0;
@@ -374,10 +377,10 @@ int main(void)
             }
 
             char buffer[50] = {0};		// Output buffer
-            snprintf(buffer, sizeof(buffer), "Total counted timer3 event = %d", tim3Accrual);
+            snprintf(buffer, sizeof(buffer), "Total counted timer3 events: %d", tim3Accrual);
             logMsg(&huart1, buffer);
 			
-            tim3Accrual = 0;	// Reset accrual
+
 
             break;
         }
