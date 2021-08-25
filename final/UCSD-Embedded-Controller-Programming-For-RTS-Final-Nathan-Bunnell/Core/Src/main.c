@@ -24,6 +24,7 @@
 /* USER CODE BEGIN Includes */
 #include <stdio.h>
 #include <string.h>
+#include <stdbool.h>
 
 /* USER CODE END Includes */
 
@@ -50,6 +51,9 @@ QSPI_HandleTypeDef hqspi;
 
 SPI_HandleTypeDef hspi3;
 
+TIM_HandleTypeDef htim2;
+TIM_HandleTypeDef htim3;
+
 UART_HandleTypeDef huart1;
 UART_HandleTypeDef huart3;
 
@@ -69,13 +73,18 @@ static void MX_SPI3_Init(void);
 static void MX_USART1_UART_Init(void);
 static void MX_USART3_UART_Init(void);
 static void MX_USB_OTG_FS_PCD_Init(void);
+static void MX_TIM2_Init(void);
+static void MX_TIM3_Init(void);
 /* USER CODE BEGIN PFP */
 
 void logMsg(UART_HandleTypeDef *huart, char *_out);
 char logGetMsg(UART_HandleTypeDef *huart);
 
-void myDelay1(uint8_t mSec);
-void myDelay2(uint8_t mSec);
+void FMC_IRQn_Init(void);
+void FMC_IRQ_CpltCallback(void);
+
+void myDelay1(uint32_t mSec);
+void myDelay2(uint32_t mSec);
 
 /* USER CODE END PFP */
 
@@ -90,8 +99,8 @@ static bool rxInterruptComplete = 0;
 static bool swInterruptComplete = 0;
 
 // Define a interrupt-complete status flag and accrual counter for Timer 3
-static bool timer3InterruptComplete = 0;
-uint8_t timer3Accrual = 0;
+static bool tim3InterruptComplete = 0;
+uint8_t tim3Accrual = 0;
 
 // Define the IT callback functions
 void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart)
@@ -115,6 +124,7 @@ void logMsg(UART_HandleTypeDef *huart, char *_out)
 	char buffer[100] = {0};		// Large char buffer for string printing
     snprintf(buffer, sizeof(buffer), "%s\n", _out);
     HAL_UART_Transmit_IT(&huart1, (uint8_t*) buffer, strlen(buffer));
+    //HAL_UART_Transmit(&huart1, (uint8_t*) buffer, strlen(buffer), 1000);
 
     // Loiter until the IT complete flag is set
 	while (!txInterruptComplete)
@@ -141,14 +151,72 @@ char logGetMsg(UART_HandleTypeDef *huart)
 	return c;
 }
 
-void myDelay1(uint8_t mSec)
+// Added a dedicated init function here as MX_GPIO_Init() would
+//  overwrite any added code after device cfg changes
+void FMC_IRQn_Init(void)
 {
-	;	// Implement using Timer 2 interrupt
+	// Enable FMC interrupt
+	uint32_t IRQn = FMC_IRQn;
+	uint32_t wordOffset = (IRQn >> 5);			// IRQn / 32
+	uint32_t bitOffset = (IRQn & 0x1f);			// IRQn mod 32
+	NVIC->ISER[wordOffset] = (1 << bitOffset);	// Enable INT
 }
 
-void myDelay1(uint8_t mSec)
+// Callback function for the FMC interrupt
+//  Toggle an LED to give indication of int and
+//  set flag to be used in main routine
+void FMC_IRQ_CpltCallback(void)
 {
-	;	// Implement using SysTick interrupt
+	HAL_GPIO_TogglePin(LED2_GPIO_Port, LED2_Pin);
+	swInterruptComplete = 1;
+}
+
+// NOTE: APB1 Timer clocks prescaled down to 10MHz in Clock Config tool
+void myDelay1(uint32_t mSec)
+{
+	if (mSec == 0)	// Dummy check that we have a real value
+		return;
+
+	TIM2->CR1 &= ~TIM_CR1_CEN;	// Disable for config
+	TIM2->SR = 0;				// Clear status reg
+	TIM2->CNT = 0;				// Clear accrual
+	TIM2->PSC = 9999;			// PSC = (10MHz / 1KHz) - 1
+	TIM2->ARR = mSec - 1;		// Delay - 1
+	TIM2->CR1 |= TIM_CR1_CEN;	// Re-enable timer
+
+	while ((TIM2->SR & TIM_SR_UIF) == 0);	// Loop until the UIF flag is set in the SR
+
+
+
+}
+
+// Simple loop implementation to delay for a give number of mSec
+void myDelay2(uint32_t mSec)
+{
+	SysTick->LOAD = 80000;	// LOAD * (1/80MHz) = target of 1 mSec
+	SysTick->VAL = 0;		// Clear value
+	SysTick->CTRL |= SysTick_CTRL_TICKINT_Msk;	// Set clock source to internal
+	SysTick->CTRL |= SysTick_CTRL_ENABLE_Msk; // Enable SysTick
+
+
+	while (mSec > 0)
+	{
+		while((SysTick->CTRL & SysTick_CTRL_COUNTFLAG_Msk) == 0)
+			{
+				;	// Loiter while the CountFlag in bit 16 is not set
+			}
+		mSec--;
+	}
+
+}
+
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
+{
+	if (htim->Instance == TIM3)
+	{
+		tim3Accrual++;
+		tim3InterruptComplete = 1;
+	}
 }
 
 /* USER CODE END 0 */
@@ -188,7 +256,15 @@ int main(void)
   MX_USART1_UART_Init();
   MX_USART3_UART_Init();
   MX_USB_OTG_FS_PCD_Init();
+  MX_TIM2_Init();
+  MX_TIM3_Init();
   /* USER CODE BEGIN 2 */
+
+  // Init SW interrupt
+  FMC_IRQn_Init();
+
+  // Init the overflow interrupt for TIM3
+  __HAL_TIM_ENABLE_IT(&htim3, TIM_IT_UPDATE );
 
   // Header info with instructions for user at console
   logMsg(&huart1, "Welcome to Embedded controller programming");
@@ -218,16 +294,18 @@ int main(void)
 
         case ('g'):
         {
-			// Print received char, print message indicating delay, toggle green LED on and off with myDelay1()
+			// Print received char, print message indicating delay, toggle green LED on and off with myDelay2()
             logMsg(&huart1, "g");
 			
-			snprintf(buffer, sizeof(buffer), "Toggling green LED every 1000msec");
+            char buffer[50] = {0};				// Output buffer
+			snprintf(buffer, sizeof(buffer), "Toggling green LED 3x on every 1000ms");
 			logMsg(&huart1, buffer);
 			
             HAL_GPIO_TogglePin(LED2_GPIO_Port, LED2_Pin);
-			myDelay(1000);
+			myDelay2(1000);
 			HAL_GPIO_TogglePin(LED2_GPIO_Port, LED2_Pin);
-			myDelay(1000);
+			myDelay2(1000);
+			HAL_GPIO_TogglePin(LED2_GPIO_Port, LED2_Pin);
 			
             break;
         }
@@ -237,13 +315,15 @@ int main(void)
 			// Print received char, print message indicating delay, toggle blue LED on and off with myDelay1()
             logMsg(&huart1, "b");
 			
-			snprintf(buffer, sizeof(buffer), "Toggling blue LED every 1000msec");
+            char buffer[50] = {0};		// Output buffer
+			snprintf(buffer, sizeof(buffer), "Toggling blue LED 3x on every 1000ms");
 			logMsg(&huart1, buffer);
 			
             HAL_GPIO_TogglePin(LED3_WIFI__LED4_BLE_GPIO_Port, LED3_WIFI__LED4_BLE_Pin);
-			myDelay(1000);
+			myDelay1(1000);
 			HAL_GPIO_TogglePin(LED3_WIFI__LED4_BLE_GPIO_Port, LED3_WIFI__LED4_BLE_Pin);
-			myDelay(1000);
+			myDelay1(1000);
+			HAL_GPIO_TogglePin(LED3_WIFI__LED4_BLE_GPIO_Port, LED3_WIFI__LED4_BLE_Pin);
 			
             break;
         }
@@ -252,7 +332,10 @@ int main(void)
         {
             logMsg(&huart1, "s");
 
-            // Implement SW interrupt under FMC_IRQn in stm32l4xx_it.c
+            // Enable SW interrupt at target IRQ, FMC or 48
+            NVIC->STIR = FMC_IRQn;
+
+            // Implement callback under FMC_IRQ_CpltCallback()
 			while (!swInterruptComplete)
 			{
 				;	// Loiter until flag is set
@@ -260,6 +343,7 @@ int main(void)
 			
 			swInterruptComplete = 0;	// Reset flag
 			
+			char buffer[50] = {0};		// Output buffer
             snprintf(buffer, sizeof(buffer), "SW Interrupt detected");
 			logMsg(&huart1, buffer);
 
@@ -271,15 +355,29 @@ int main(void)
             logMsg(&huart1, "t");
 
             // Implement event counter using timer 3
-            while (!swInterruptComplete)
-			{
-				;	// Loiter until target count is reached
-			}
-			
-            snprintf(buffer, sizeof(buffer), "Total counted timer3 event = %d", timer3Accrual);
+/*
+            TIM3->CR1 &= ~TIM_CR1_CEN;	// Disable for config
+			TIM3->SR = 0;				// Clear status reg
+			TIM3->CNT = 0;				// Clear accrual
+			TIM3->PSC = 9999;			// PSC = (10MHz / 1KHz) - 1
+			TIM3->ARR = 999;			// Delay (1k mSec) - 1
+			TIM3->CR1 |= TIM_CR1_CEN;	// Re-enable timer
+*/
+            while (tim3Accrual < 10)
+            {
+            	tim3InterruptComplete = 0;
+
+            	while (!tim3InterruptComplete)
+				{
+					;	// Loiter until target count is reached
+				}
+            }
+
+            char buffer[50] = {0};		// Output buffer
+            snprintf(buffer, sizeof(buffer), "Total counted timer3 event = %d", tim3Accrual);
             logMsg(&huart1, buffer);
 			
-			timer3Accrual = 0;	// Reset accrual
+            tim3Accrual = 0;	// Reset accrual
 
             break;
         }
@@ -314,8 +412,13 @@ void SystemClock_Config(void)
 {
   RCC_OscInitTypeDef RCC_OscInitStruct = {0};
   RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
-  RCC_PeriphCLKInitTypeDef PeriphClkInit = {0};
 
+  /** Configure the main internal regulator output voltage
+  */
+  if (HAL_PWREx_ControlVoltageScaling(PWR_REGULATOR_VOLTAGE_SCALE1) != HAL_OK)
+  {
+    Error_Handler();
+  }
   /** Configure LSE Drive Capability
   */
   HAL_PWR_EnableBkUpAccess();
@@ -345,35 +448,10 @@ void SystemClock_Config(void)
                               |RCC_CLOCKTYPE_PCLK1|RCC_CLOCKTYPE_PCLK2;
   RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
   RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
-  RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV1;
+  RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV16;
   RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
 
   if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_4) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  PeriphClkInit.PeriphClockSelection = RCC_PERIPHCLK_USART1|RCC_PERIPHCLK_USART3
-                              |RCC_PERIPHCLK_I2C2|RCC_PERIPHCLK_DFSDM1
-                              |RCC_PERIPHCLK_USB;
-  PeriphClkInit.Usart1ClockSelection = RCC_USART1CLKSOURCE_PCLK2;
-  PeriphClkInit.Usart3ClockSelection = RCC_USART3CLKSOURCE_PCLK1;
-  PeriphClkInit.I2c2ClockSelection = RCC_I2C2CLKSOURCE_PCLK1;
-  PeriphClkInit.Dfsdm1ClockSelection = RCC_DFSDM1CLKSOURCE_PCLK;
-  PeriphClkInit.UsbClockSelection = RCC_USBCLKSOURCE_PLLSAI1;
-  PeriphClkInit.PLLSAI1.PLLSAI1Source = RCC_PLLSOURCE_MSI;
-  PeriphClkInit.PLLSAI1.PLLSAI1M = 1;
-  PeriphClkInit.PLLSAI1.PLLSAI1N = 24;
-  PeriphClkInit.PLLSAI1.PLLSAI1P = RCC_PLLP_DIV7;
-  PeriphClkInit.PLLSAI1.PLLSAI1Q = RCC_PLLQ_DIV2;
-  PeriphClkInit.PLLSAI1.PLLSAI1R = RCC_PLLR_DIV2;
-  PeriphClkInit.PLLSAI1.PLLSAI1ClockOut = RCC_PLLSAI1_48M2CLK;
-  if (HAL_RCCEx_PeriphCLKConfig(&PeriphClkInit) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  /** Configure the main internal regulator output voltage
-  */
-  if (HAL_PWREx_ControlVoltageScaling(PWR_REGULATOR_VOLTAGE_SCALE1) != HAL_OK)
   {
     Error_Handler();
   }
@@ -436,7 +514,7 @@ static void MX_I2C2_Init(void)
 
   /* USER CODE END I2C2_Init 1 */
   hi2c2.Instance = I2C2;
-  hi2c2.Init.Timing = 0x10909CEC;
+  hi2c2.Init.Timing = 0x00101319;
   hi2c2.Init.OwnAddress1 = 0;
   hi2c2.Init.AddressingMode = I2C_ADDRESSINGMODE_7BIT;
   hi2c2.Init.DualAddressMode = I2C_DUALADDRESS_DISABLE;
@@ -536,6 +614,96 @@ static void MX_SPI3_Init(void)
   /* USER CODE BEGIN SPI3_Init 2 */
 
   /* USER CODE END SPI3_Init 2 */
+
+}
+
+/**
+  * @brief TIM2 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM2_Init(void)
+{
+
+  /* USER CODE BEGIN TIM2_Init 0 */
+
+  /* USER CODE END TIM2_Init 0 */
+
+  TIM_ClockConfigTypeDef sClockSourceConfig = {0};
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+
+  /* USER CODE BEGIN TIM2_Init 1 */
+
+  /* USER CODE END TIM2_Init 1 */
+  htim2.Instance = TIM2;
+  htim2.Init.Prescaler = 0;
+  htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim2.Init.Period = 4294967295;
+  htim2.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim2.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
+  if (HAL_TIM_ConfigClockSource(&htim2, &sClockSourceConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim2, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM2_Init 2 */
+
+  /* USER CODE END TIM2_Init 2 */
+
+}
+
+/**
+  * @brief TIM3 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM3_Init(void)
+{
+
+  /* USER CODE BEGIN TIM3_Init 0 */
+
+  /* USER CODE END TIM3_Init 0 */
+
+  TIM_ClockConfigTypeDef sClockSourceConfig = {0};
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+
+  /* USER CODE BEGIN TIM3_Init 1 */
+
+  /* USER CODE END TIM3_Init 1 */
+  htim3.Instance = TIM3;
+  htim3.Init.Prescaler = 9999;
+  htim3.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim3.Init.Period = 999;
+  htim3.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim3.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim3) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
+  if (HAL_TIM_ConfigClockSource(&htim3, &sClockSourceConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim3, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM3_Init 2 */
+
+  /* USER CODE END TIM3_Init 2 */
 
 }
 
@@ -656,6 +824,7 @@ static void MX_GPIO_Init(void)
   /* GPIO Ports Clock Enable */
   __HAL_RCC_GPIOE_CLK_ENABLE();
   __HAL_RCC_GPIOC_CLK_ENABLE();
+  __HAL_RCC_GPIOH_CLK_ENABLE();
   __HAL_RCC_GPIOA_CLK_ENABLE();
   __HAL_RCC_GPIOB_CLK_ENABLE();
   __HAL_RCC_GPIOD_CLK_ENABLE();
@@ -698,11 +867,11 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(GPIOE, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : PC13 VL53L0X_GPIO1_EXTI7_Pin LSM3MDL_DRDY_EXTI8_Pin */
-  GPIO_InitStruct.Pin = GPIO_PIN_13|VL53L0X_GPIO1_EXTI7_Pin|LSM3MDL_DRDY_EXTI8_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
+  /*Configure GPIO pin : BUTTON_EXTI13_Pin */
+  GPIO_InitStruct.Pin = BUTTON_EXTI13_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_FALLING;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
-  HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
+  HAL_GPIO_Init(BUTTON_EXTI13_GPIO_Port, &GPIO_InitStruct);
 
   /*Configure GPIO pins : ARD_A5_Pin ARD_A4_Pin ARD_A3_Pin ARD_A2_Pin
                            ARD_A1_Pin ARD_A0_Pin */
@@ -726,14 +895,6 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
-
-  /*Configure GPIO pin : ARD_D4_Pin */
-  GPIO_InitStruct.Pin = ARD_D4_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  GPIO_InitStruct.Alternate = GPIO_AF1_TIM2;
-  HAL_GPIO_Init(ARD_D4_GPIO_Port, &GPIO_InitStruct);
 
   /*Configure GPIO pin : ARD_D7_Pin */
   GPIO_InitStruct.Pin = ARD_D7_Pin;
@@ -792,6 +953,12 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
 
+  /*Configure GPIO pins : VL53L0X_GPIO1_EXTI7_Pin LSM3MDL_DRDY_EXTI8_Pin */
+  GPIO_InitStruct.Pin = VL53L0X_GPIO1_EXTI7_Pin|LSM3MDL_DRDY_EXTI8_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
+
   /*Configure GPIO pin : PMOD_SPI2_SCK_Pin */
   GPIO_InitStruct.Pin = PMOD_SPI2_SCK_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
@@ -811,7 +978,7 @@ static void MX_GPIO_Init(void)
   /*Configure GPIO pins : ARD_D15_Pin ARD_D14_Pin */
   GPIO_InitStruct.Pin = ARD_D15_Pin|ARD_D14_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_AF_OD;
-  GPIO_InitStruct.Pull = GPIO_PULLUP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
   GPIO_InitStruct.Alternate = GPIO_AF4_I2C1;
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
