@@ -23,6 +23,10 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 
+#include <stdio.h>
+#include <string.h>
+#include <stdbool.h>
+
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -40,39 +44,91 @@
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
-DFSDM_Channel_HandleTypeDef hdfsdm1_channel1;
-
-I2C_HandleTypeDef hi2c2;
-
-QSPI_HandleTypeDef hqspi;
+RTC_HandleTypeDef hrtc;
 
 SPI_HandleTypeDef hspi3;
 
 UART_HandleTypeDef huart1;
-UART_HandleTypeDef huart3;
-
-PCD_HandleTypeDef hpcd_USB_OTG_FS;
+DMA_HandleTypeDef hdma_usart1_rx;
+DMA_HandleTypeDef hdma_usart1_tx;
 
 /* USER CODE BEGIN PV */
+
+// Define a pair of interrupt-complete status flags
+static bool txInterruptComplete = 0;
+static bool rxInterruptComplete = 0;
 
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
-static void MX_DFSDM1_Init(void);
-static void MX_I2C2_Init(void);
-static void MX_QUADSPI_Init(void);
 static void MX_SPI3_Init(void);
+static void MX_DMA_Init(void);
 static void MX_USART1_UART_Init(void);
-static void MX_USART3_UART_Init(void);
-static void MX_USB_OTG_FS_PCD_Init(void);
+static void MX_RTC_Init(void);
 /* USER CODE BEGIN PFP */
+
+//void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart);
+//void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart);
+
+void logMsg(UART_HandleTypeDef *huart, char *_out);
+char logGetMsg(UART_HandleTypeDef *huart);
 
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+
+// Define the IT callback functions
+void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart)
+{
+	// Set our complete flag
+	txInterruptComplete = 1;
+}
+
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
+{
+	// Set our complete flag
+	rxInterruptComplete = 1;
+}
+
+// logMsg function prints a string, _out, to the console over the specified UART
+void logMsg(UART_HandleTypeDef *huart, char *_out)
+{
+	// Clear the complete flag
+	txInterruptComplete = 0;
+
+	char buffer[100] = {0};		// Large char buffer for string printing
+    snprintf(buffer, sizeof(buffer), "%s", _out);
+    HAL_UART_Transmit_DMA(&huart1, (uint8_t*) buffer, strlen(buffer));
+
+    // Loiter until the IT complete flag is set
+
+	while (!txInterruptComplete)
+	{
+		;
+	}
+
+}
+
+// logMsg function returns a char, c, over the specified UART
+char logGetMsg(UART_HandleTypeDef *huart)
+{
+	// Clear the complete flag
+	rxInterruptComplete = 0;
+
+  char c = '\0';				// Set default return value to NULL
+  HAL_UART_Receive_DMA(&huart1, (uint8_t*) &c, sizeof(c));
+
+  // Loiter until the IT complete flag is set
+  while (!rxInterruptComplete)
+  {
+	  ;
+  }
+
+  return c;
+}
 
 /* USER CODE END 0 */
 
@@ -104,14 +160,22 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
-  MX_DFSDM1_Init();
-  MX_I2C2_Init();
-  MX_QUADSPI_Init();
   MX_SPI3_Init();
+  MX_DMA_Init();
   MX_USART1_UART_Init();
-  MX_USART3_UART_Init();
-  MX_USB_OTG_FS_PCD_Init();
+  MX_RTC_Init();
   /* USER CODE BEGIN 2 */
+
+  RTC_DateTypeDef rtcDate;
+  RTC_TimeTypeDef rtcTime;
+
+
+  // Header info with instructions for user at console
+    logMsg(&huart1, "Welcome to Embedded controller programming\n");
+    logMsg(&huart1, " - Enter g for toggling Green LED\n");
+    logMsg(&huart1, " - Enter b for toggling Blue LED\n");
+    logMsg(&huart1, " - Enter t for RTC values\n");
+    logMsg(&huart1, " - Enter c for clock mode\n");
 
   /* USER CODE END 2 */
 
@@ -122,6 +186,82 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+	  // Define an input char with default value of NULL
+	      char input = '\0';
+	      input = logGetMsg(&huart1);
+
+	      // Evaluate input char and execute methods associated with command
+	      switch(input)
+	      {
+	          // Print received char, toggle green LED
+	          case ('g'):
+	          {
+	              logMsg(&huart1, "g\n");
+	              HAL_GPIO_TogglePin(LED2_GPIO_Port, LED2_Pin);
+	              break;
+	          }
+
+	          // Print received char, toggle blue LED
+	          case ('b'):
+	          {
+	              logMsg(&huart1, "b\n");
+	              HAL_GPIO_TogglePin(LED3_WIFI__LED4_BLE_GPIO_Port, LED3_WIFI__LED4_BLE_Pin);
+	              break;
+	          }
+
+	          // Print RTC time
+			  case ('t'):
+			  {
+				  logMsg(&huart1, "t\n");
+				  HAL_RTC_GetTime(&hrtc, &rtcTime, RTC_FORMAT_BIN);
+				  HAL_RTC_GetDate(&hrtc, &rtcDate, RTC_FORMAT_BIN);
+
+				  char buffer[100] = {0};		// Large char buffer for string printing
+				  snprintf(buffer, sizeof(buffer), "Current date is: %02d/%02d/%02d\n", rtcDate.Month, rtcDate.Date, rtcDate.Year);
+				  //HAL_UART_Transmit_DMA(&huart1, (uint8_t*) buffer, strlen(buffer));
+				  logMsg(&huart1, buffer);
+
+				  HAL_Delay(100);
+
+				  snprintf(buffer, sizeof(buffer), "Current time is: %02d:%02d:%02d\n", rtcTime.Hours, rtcTime.Minutes, rtcTime.Seconds);
+				  //HAL_UART_Transmit_DMA(&huart1, (uint8_t*) buffer, strlen(buffer));
+				  logMsg(&huart1, buffer);
+
+				  break;
+			  }
+
+			  case ('c'):
+			  {
+				  logMsg(&huart1, "Entering clock mode. Reset req'd to exit!\n");
+				  char buffer[100] = {0};		// Large char buffer for string printing
+/*
+				  HAL_RTC_GetTime(&hrtc, &rtcTime, RTC_FORMAT_BIN);
+
+				  snprintf(buffer, sizeof(buffer), "\rCurrent time is: %02d:%02d:%02d", rtcTime.Hours, rtcTime.Minutes, rtcTime.Seconds);
+				  logMsg(&huart1, buffer);
+*/
+				  while(1)
+				  {
+					  HAL_RTC_GetTime(&hrtc, &rtcTime, RTC_FORMAT_BIN);
+					  HAL_RTC_GetDate(&hrtc, &rtcDate, RTC_FORMAT_BIN);
+
+					  snprintf(buffer, sizeof(buffer), "Current time is: %02d:%02d:%02d", rtcTime.Hours, rtcTime.Minutes, rtcTime.Seconds);
+					  logMsg(&huart1, "\r");
+					  logMsg(&huart1, buffer);
+
+					  HAL_Delay(5000);
+				  }
+
+				  break;
+			  }
+
+	          // Default case. Print error message
+	          default:
+	          {
+	              logMsg(&huart1, "Unknown character received!\n");
+	              break;
+	          }
+	      }
   }
   /* USER CODE END 3 */
 }
@@ -148,8 +288,10 @@ void SystemClock_Config(void)
   /** Initializes the RCC Oscillators according to the specified parameters
   * in the RCC_OscInitTypeDef structure.
   */
-  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_LSE|RCC_OSCILLATORTYPE_MSI;
+  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_LSI|RCC_OSCILLATORTYPE_LSE
+                              |RCC_OSCILLATORTYPE_MSI;
   RCC_OscInitStruct.LSEState = RCC_LSE_ON;
+  RCC_OscInitStruct.LSIState = RCC_LSI_ON;
   RCC_OscInitStruct.MSIState = RCC_MSI_ON;
   RCC_OscInitStruct.MSICalibrationValue = 0;
   RCC_OscInitStruct.MSIClockRange = RCC_MSIRANGE_6;
@@ -183,119 +325,65 @@ void SystemClock_Config(void)
 }
 
 /**
-  * @brief DFSDM1 Initialization Function
+  * @brief RTC Initialization Function
   * @param None
   * @retval None
   */
-static void MX_DFSDM1_Init(void)
+static void MX_RTC_Init(void)
 {
 
-  /* USER CODE BEGIN DFSDM1_Init 0 */
+  /* USER CODE BEGIN RTC_Init 0 */
 
-  /* USER CODE END DFSDM1_Init 0 */
+  /* USER CODE END RTC_Init 0 */
 
-  /* USER CODE BEGIN DFSDM1_Init 1 */
+  RTC_TimeTypeDef sTime = {0};
+  RTC_DateTypeDef sDate = {0};
 
-  /* USER CODE END DFSDM1_Init 1 */
-  hdfsdm1_channel1.Instance = DFSDM1_Channel1;
-  hdfsdm1_channel1.Init.OutputClock.Activation = ENABLE;
-  hdfsdm1_channel1.Init.OutputClock.Selection = DFSDM_CHANNEL_OUTPUT_CLOCK_SYSTEM;
-  hdfsdm1_channel1.Init.OutputClock.Divider = 2;
-  hdfsdm1_channel1.Init.Input.Multiplexer = DFSDM_CHANNEL_EXTERNAL_INPUTS;
-  hdfsdm1_channel1.Init.Input.DataPacking = DFSDM_CHANNEL_STANDARD_MODE;
-  hdfsdm1_channel1.Init.Input.Pins = DFSDM_CHANNEL_FOLLOWING_CHANNEL_PINS;
-  hdfsdm1_channel1.Init.SerialInterface.Type = DFSDM_CHANNEL_SPI_RISING;
-  hdfsdm1_channel1.Init.SerialInterface.SpiClock = DFSDM_CHANNEL_SPI_CLOCK_INTERNAL;
-  hdfsdm1_channel1.Init.Awd.FilterOrder = DFSDM_CHANNEL_FASTSINC_ORDER;
-  hdfsdm1_channel1.Init.Awd.Oversampling = 1;
-  hdfsdm1_channel1.Init.Offset = 0;
-  hdfsdm1_channel1.Init.RightBitShift = 0x00;
-  if (HAL_DFSDM_ChannelInit(&hdfsdm1_channel1) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  /* USER CODE BEGIN DFSDM1_Init 2 */
+  /* USER CODE BEGIN RTC_Init 1 */
 
-  /* USER CODE END DFSDM1_Init 2 */
-
-}
-
-/**
-  * @brief I2C2 Initialization Function
-  * @param None
-  * @retval None
+  /* USER CODE END RTC_Init 1 */
+  /** Initialize RTC Only
   */
-static void MX_I2C2_Init(void)
-{
-
-  /* USER CODE BEGIN I2C2_Init 0 */
-
-  /* USER CODE END I2C2_Init 0 */
-
-  /* USER CODE BEGIN I2C2_Init 1 */
-
-  /* USER CODE END I2C2_Init 1 */
-  hi2c2.Instance = I2C2;
-  hi2c2.Init.Timing = 0x00000E14;
-  hi2c2.Init.OwnAddress1 = 0;
-  hi2c2.Init.AddressingMode = I2C_ADDRESSINGMODE_7BIT;
-  hi2c2.Init.DualAddressMode = I2C_DUALADDRESS_DISABLE;
-  hi2c2.Init.OwnAddress2 = 0;
-  hi2c2.Init.OwnAddress2Masks = I2C_OA2_NOMASK;
-  hi2c2.Init.GeneralCallMode = I2C_GENERALCALL_DISABLE;
-  hi2c2.Init.NoStretchMode = I2C_NOSTRETCH_DISABLE;
-  if (HAL_I2C_Init(&hi2c2) != HAL_OK)
+  hrtc.Instance = RTC;
+  hrtc.Init.HourFormat = RTC_HOURFORMAT_24;
+  hrtc.Init.AsynchPrediv = 127;
+  hrtc.Init.SynchPrediv = 255;
+  hrtc.Init.OutPut = RTC_OUTPUT_DISABLE;
+  hrtc.Init.OutPutRemap = RTC_OUTPUT_REMAP_NONE;
+  hrtc.Init.OutPutPolarity = RTC_OUTPUT_POLARITY_HIGH;
+  hrtc.Init.OutPutType = RTC_OUTPUT_TYPE_OPENDRAIN;
+  if (HAL_RTC_Init(&hrtc) != HAL_OK)
   {
     Error_Handler();
   }
-  /** Configure Analogue filter
+
+  /* USER CODE BEGIN Check_RTC_BKUP */
+
+  /* USER CODE END Check_RTC_BKUP */
+
+  /** Initialize RTC and set the Time and Date
   */
-  if (HAL_I2CEx_ConfigAnalogFilter(&hi2c2, I2C_ANALOGFILTER_ENABLE) != HAL_OK)
+  sTime.Hours = 0x12;
+  sTime.Minutes = 0x15;
+  sTime.Seconds = 0x00;
+  sTime.DayLightSaving = RTC_DAYLIGHTSAVING_NONE;
+  sTime.StoreOperation = RTC_STOREOPERATION_RESET;
+  if (HAL_RTC_SetTime(&hrtc, &sTime, RTC_FORMAT_BCD) != HAL_OK)
   {
     Error_Handler();
   }
-  /** Configure Digital filter
-  */
-  if (HAL_I2CEx_ConfigDigitalFilter(&hi2c2, 0) != HAL_OK)
+  sDate.WeekDay = RTC_WEEKDAY_FRIDAY;
+  sDate.Month = RTC_MONTH_AUGUST;
+  sDate.Date = 0x27;
+  sDate.Year = 0x21;
+
+  if (HAL_RTC_SetDate(&hrtc, &sDate, RTC_FORMAT_BCD) != HAL_OK)
   {
     Error_Handler();
   }
-  /* USER CODE BEGIN I2C2_Init 2 */
+  /* USER CODE BEGIN RTC_Init 2 */
 
-  /* USER CODE END I2C2_Init 2 */
-
-}
-
-/**
-  * @brief QUADSPI Initialization Function
-  * @param None
-  * @retval None
-  */
-static void MX_QUADSPI_Init(void)
-{
-
-  /* USER CODE BEGIN QUADSPI_Init 0 */
-
-  /* USER CODE END QUADSPI_Init 0 */
-
-  /* USER CODE BEGIN QUADSPI_Init 1 */
-
-  /* USER CODE END QUADSPI_Init 1 */
-  /* QUADSPI parameter configuration*/
-  hqspi.Instance = QUADSPI;
-  hqspi.Init.ClockPrescaler = 2;
-  hqspi.Init.FifoThreshold = 4;
-  hqspi.Init.SampleShifting = QSPI_SAMPLE_SHIFTING_HALFCYCLE;
-  hqspi.Init.FlashSize = 23;
-  hqspi.Init.ChipSelectHighTime = QSPI_CS_HIGH_TIME_1_CYCLE;
-  hqspi.Init.ClockMode = QSPI_CLOCK_MODE_0;
-  if (HAL_QSPI_Init(&hqspi) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  /* USER CODE BEGIN QUADSPI_Init 2 */
-
-  /* USER CODE END QUADSPI_Init 2 */
+  /* USER CODE END RTC_Init 2 */
 
 }
 
@@ -375,72 +463,21 @@ static void MX_USART1_UART_Init(void)
 }
 
 /**
-  * @brief USART3 Initialization Function
-  * @param None
-  * @retval None
+  * Enable DMA controller clock
   */
-static void MX_USART3_UART_Init(void)
+static void MX_DMA_Init(void)
 {
 
-  /* USER CODE BEGIN USART3_Init 0 */
+  /* DMA controller clock enable */
+  __HAL_RCC_DMA1_CLK_ENABLE();
 
-  /* USER CODE END USART3_Init 0 */
-
-  /* USER CODE BEGIN USART3_Init 1 */
-
-  /* USER CODE END USART3_Init 1 */
-  huart3.Instance = USART3;
-  huart3.Init.BaudRate = 115200;
-  huart3.Init.WordLength = UART_WORDLENGTH_8B;
-  huart3.Init.StopBits = UART_STOPBITS_1;
-  huart3.Init.Parity = UART_PARITY_NONE;
-  huart3.Init.Mode = UART_MODE_TX_RX;
-  huart3.Init.HwFlowCtl = UART_HWCONTROL_NONE;
-  huart3.Init.OverSampling = UART_OVERSAMPLING_16;
-  huart3.Init.OneBitSampling = UART_ONE_BIT_SAMPLE_DISABLE;
-  huart3.AdvancedInit.AdvFeatureInit = UART_ADVFEATURE_NO_INIT;
-  if (HAL_UART_Init(&huart3) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  /* USER CODE BEGIN USART3_Init 2 */
-
-  /* USER CODE END USART3_Init 2 */
-
-}
-
-/**
-  * @brief USB_OTG_FS Initialization Function
-  * @param None
-  * @retval None
-  */
-static void MX_USB_OTG_FS_PCD_Init(void)
-{
-
-  /* USER CODE BEGIN USB_OTG_FS_Init 0 */
-
-  /* USER CODE END USB_OTG_FS_Init 0 */
-
-  /* USER CODE BEGIN USB_OTG_FS_Init 1 */
-
-  /* USER CODE END USB_OTG_FS_Init 1 */
-  hpcd_USB_OTG_FS.Instance = USB_OTG_FS;
-  hpcd_USB_OTG_FS.Init.dev_endpoints = 6;
-  hpcd_USB_OTG_FS.Init.speed = PCD_SPEED_FULL;
-  hpcd_USB_OTG_FS.Init.phy_itface = PCD_PHY_EMBEDDED;
-  hpcd_USB_OTG_FS.Init.Sof_enable = DISABLE;
-  hpcd_USB_OTG_FS.Init.low_power_enable = DISABLE;
-  hpcd_USB_OTG_FS.Init.lpm_enable = DISABLE;
-  hpcd_USB_OTG_FS.Init.battery_charging_enable = DISABLE;
-  hpcd_USB_OTG_FS.Init.use_dedicated_ep1 = DISABLE;
-  hpcd_USB_OTG_FS.Init.vbus_sensing_enable = DISABLE;
-  if (HAL_PCD_Init(&hpcd_USB_OTG_FS) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  /* USER CODE BEGIN USB_OTG_FS_Init 2 */
-
-  /* USER CODE END USB_OTG_FS_Init 2 */
+  /* DMA interrupt init */
+  /* DMA1_Channel4_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA1_Channel4_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(DMA1_Channel4_IRQn);
+  /* DMA1_Channel5_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA1_Channel5_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(DMA1_Channel5_IRQn);
 
 }
 
@@ -570,6 +607,40 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
+  /*Configure GPIO pins : DFSDM1_DATIN2_Pin DFSDM1_CKOUT_Pin */
+  GPIO_InitStruct.Pin = DFSDM1_DATIN2_Pin|DFSDM1_CKOUT_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  GPIO_InitStruct.Alternate = GPIO_AF6_DFSDM1;
+  HAL_GPIO_Init(GPIOE, &GPIO_InitStruct);
+
+  /*Configure GPIO pins : QUADSPI_CLK_Pin QUADSPI_NCS_Pin OQUADSPI_BK1_IO0_Pin QUADSPI_BK1_IO1_Pin
+                           QUAD_SPI_BK1_IO2_Pin QUAD_SPI_BK1_IO3_Pin */
+  GPIO_InitStruct.Pin = QUADSPI_CLK_Pin|QUADSPI_NCS_Pin|OQUADSPI_BK1_IO0_Pin|QUADSPI_BK1_IO1_Pin
+                          |QUAD_SPI_BK1_IO2_Pin|QUAD_SPI_BK1_IO3_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
+  GPIO_InitStruct.Alternate = GPIO_AF10_QUADSPI;
+  HAL_GPIO_Init(GPIOE, &GPIO_InitStruct);
+
+  /*Configure GPIO pins : INTERNAL_I2C2_SCL_Pin INTERNAL_I2C2_SDA_Pin */
+  GPIO_InitStruct.Pin = INTERNAL_I2C2_SCL_Pin|INTERNAL_I2C2_SDA_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_AF_OD;
+  GPIO_InitStruct.Pull = GPIO_PULLUP;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
+  GPIO_InitStruct.Alternate = GPIO_AF4_I2C2;
+  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+
+  /*Configure GPIO pins : INTERNAL_UART3_TX_Pin INTERNAL_UART3_RX_Pin */
+  GPIO_InitStruct.Pin = INTERNAL_UART3_TX_Pin|INTERNAL_UART3_RX_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
+  GPIO_InitStruct.Alternate = GPIO_AF7_USART3;
+  HAL_GPIO_Init(GPIOD, &GPIO_InitStruct);
+
   /*Configure GPIO pins : LPS22HB_INT_DRDY_EXTI0_Pin LSM6DSL_INT1_EXTI11_Pin ARD_D2_Pin HTS221_DRDY_EXTI15_Pin
                            PMOD_IRQ_EXTI12_Pin */
   GPIO_InitStruct.Pin = LPS22HB_INT_DRDY_EXTI0_Pin|LSM6DSL_INT1_EXTI11_Pin|ARD_D2_Pin|HTS221_DRDY_EXTI15_Pin
@@ -597,6 +668,20 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : USB_OTG_FS_VBUS_Pin */
+  GPIO_InitStruct.Pin = USB_OTG_FS_VBUS_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(USB_OTG_FS_VBUS_GPIO_Port, &GPIO_InitStruct);
+
+  /*Configure GPIO pins : USB_OTG_FS_ID_Pin USB_OTG_FS_DM_Pin USB_OTG_FS_DP_Pin */
+  GPIO_InitStruct.Pin = USB_OTG_FS_ID_Pin|USB_OTG_FS_DM_Pin|USB_OTG_FS_DP_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
+  GPIO_InitStruct.Alternate = GPIO_AF10_OTG_FS;
+  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
   /*Configure GPIO pin : PMOD_SPI2_SCK_Pin */
   GPIO_InitStruct.Pin = PMOD_SPI2_SCK_Pin;
